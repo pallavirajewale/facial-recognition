@@ -1,0 +1,77 @@
+import torch
+import cv2
+import numpy as np
+from tkinter import Tk, filedialog
+
+# IoU calculation function
+def calculate_iou(boxA, boxB):
+    xA = max(boxA[0], boxB[0])
+    yA = max(boxA[1], boxB[1])
+    xB = min(boxA[2], boxB[2])
+    yB = min(boxA[3], boxB[3])
+
+    interArea = max(0, xB - xA) * max(0, yB - yA)
+    if interArea == 0:
+        return 0.0
+
+    boxAArea = (boxA[2] - boxA[0]) * (boxA[3] - boxA[1])
+    boxBArea = (boxB[2] - boxB[0]) * (boxB[3] - boxB[1])
+    iou = interArea / float(boxAArea + boxBArea - interArea)
+    return iou
+
+# Load YOLOv5 model
+model = torch.hub.load('ultralytics/yolov5', 'yolov5s', pretrained=True)
+
+# File dialog to select video
+Tk().withdraw()  # Hide Tkinter root window
+video_path = filedialog.askopenfilename(title="Select a Video File", filetypes=[("Video Files", "*.mp4;*.avi;*.mov;*.mkv")])
+
+# Initialize video capture
+cap = cv2.VideoCapture(video_path)
+
+total_iou = 0
+detection_count = 0
+frame_count = 0
+
+while cap.isOpened():
+    ret, frame = cap.read()
+    if not ret:
+        break
+
+    # Run YOLOv5 model on the frame
+    results = model(frame)
+    detections = results.xyxy[0].numpy()
+
+    # Replace with ground truth boxes if available, e.g., [(x1, y1, x2, y2), ...]
+    ground_truth_boxes = [(50, 50, 200, 200)]  # Replace with actual ground-truth data
+
+    # Calculate IoU for each detected box
+    for detection in detections:
+        if len(detection) >= 6:  # Ensure detection has enough values
+            x1, y1, x2, y2, conf, cls = detection[:6]
+            detected_box = [x1, y1, x2, y2]
+
+            for gt_box in ground_truth_boxes:
+                iou = calculate_iou(detected_box, gt_box)
+                total_iou += iou
+                detection_count += 1
+
+    # Display detected boxes
+    for detection in detections:
+        if len(detection) >= 4:  # Ensure detection has at least coordinates
+            x1, y1, x2, y2 = map(int, detection[:4])
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+
+    cv2.imshow("YOLOv5 Detection", frame)
+    frame_count += 1
+
+    # Press 'q' to quit
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+# Calculate and print average IoU as accuracy
+average_iou = total_iou / detection_count if detection_count > 0 else 0
+print(f"Average IoU (Accuracy): {average_iou:.2f}")
+
+cap.release()
+cv2.destroyAllWindows()
