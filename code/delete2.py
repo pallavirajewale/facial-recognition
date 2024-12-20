@@ -11,6 +11,11 @@ import threading
 from tkinter import filedialog
 from tkinter import Tk
 from mtcnn import MTCNN
+import queue
+import pickle
+
+frame_queue = queue.Queue(maxsize=2)
+
 # Store registered face encodings and names
 known_face_encodings = []
 known_face_names = []
@@ -54,16 +59,61 @@ def load_dataset_and_register_faces():
                         face_encoding = face_recognition.face_encodings(rgb_image, [(y, x + w, y + h, x)])[0]
                         known_face_encodings.append(face_encoding)
                         known_face_names.append(image_name.split('.')[0])
-                        face_embeddings.append(np.array(face_encoding[0]))
+                        face_embeddings.append(np.array(face_encoding))
                         # face_images.append(image)
                     except IndexError:
                         print(f"Face not detected in {image_name}. Skipping.")
 
+    with open('new_face_encode.pkl', 'wb') as model_file:
+        pickle.dump(known_face_encodings, model_file)
+    with open('new_face_names.pkl', 'wb') as scaler_file:
+        pickle.dump(known_face_names, scaler_file)
+    print("dataset and scaler saved.") 
     # Train the PNN on the registered faces
     print("Training PNN model...")
     face_embeddings_scaled = scaler.fit_transform(face_embeddings)  # Normalize the embeddings
     pnn_model.fit(face_embeddings_scaled, known_face_names)
     print("PNN model trained successfully.")
+
+
+def load_dataset():
+    """Load the dataset from a pickle file."""
+    global known_face_encodings, known_face_names
+    with open('new_face_encode.pkl', 'rb') as file:
+    # Load the data from the pickle file
+       known_face_encodings = pickle.load(file)
+    if isinstance(known_face_encodings, list):
+        print("The data1 has been successfully converted to a list.")
+
+    with open('new_face_names.pkl', 'rb') as file:
+    # Load the data from the pickle file
+         known_face_names = pickle.load(file)
+    # face_embeddings.append(np.array(face_encoding))
+    print("Training PNN model...")
+    face_embeddings_scaled = scaler.fit_transform(known_face_encodings)  # Normalize the embeddings
+    pnn_model.fit(face_embeddings_scaled, known_face_names)
+    print("PNN model trained successfully.")
+
+# Ensure the loaded data is a list
+    if isinstance(known_face_names, list):
+        print("The data2 has been successfully converted to a list.")
+
+def capture_frames(rtsp_url, frame_queue):
+    video_capture = cv2.VideoCapture(rtsp_url)
+    if not video_capture.isOpened():
+        print("Error opening RTSP stream. Please check the URL.")
+        return
+ 
+    while True:
+        ret, frame = video_capture.read()
+        if not ret:
+            print("Failed to grab frame. Exiting...")
+            break
+ 
+        if not frame_queue.full():
+            frame_queue.put(frame)
+ 
+    video_capture.release()
 
 # Function to recognize faces using webcam with face mesh and PNN
 def recognize_faces():
@@ -87,9 +137,9 @@ def recognize_faces():
             # Face recognition
             face_locations = face_recognition.face_locations(rgb_frame)
             face_encodings = face_recognition.face_encodings(rgb_frame, face_locations)
-
-            # Process face mesh
-            results = face_mesh.process(rgb_frame)
+            faces = mtcnn.detect_faces(rgb_frame)
+            combined_frame = processed_frame
+            
 
             for (top, right, bottom, left), face_encoding in zip(face_locations, face_encodings):
                 # Predict the face identity using PNN
@@ -102,42 +152,18 @@ def recognize_faces():
                 accuracy = min(accuracy, 100.0)  # Ensure accuracy doesn't exceed 100%
 
                 # Draw a rectangle around the face
-                cv2.rectangle(frame, (left, top), (right, bottom), (0, 255, 0), 2)
+                cv2.rectangle(rgb_frame, (left, top), (right, bottom), (0, 255, 0), 2)
                 # Draw the name and accuracy
-                cv2.rectangle(frame, (left, bottom - 35), (right, bottom), (0, 255, 0), cv2.FILLED)
-                cv2.putText(frame, f"{name} ({accuracy:.2f}%)", (left + 6, bottom - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+                cv2.rectangle(rgb_frame, (left, bottom - 35), (right, bottom), (0, 255, 0), cv2.FILLED)
+                cv2.putText(rgb_frame, f"{name} ({accuracy:.2f}%)", (left + 6, bottom - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
 
-        # Draw face mesh
-        if results.multi_face_landmarks:
-            for face_landmarks in results.multi_face_landmarks:
-                mp_drawing.draw_landmarks(
-                    image=frame,
-                    landmark_list=face_landmarks,
-                    connections=mp_face_mesh.FACEMESH_TESSELATION,
-                    landmark_drawing_spec=None,
-                    connection_drawing_spec=mp_drawing_styles.get_default_face_mesh_tesselation_style()
-                )
-                mp_drawing.draw_landmarks(
-                    image=frame,
-                    landmark_list=face_landmarks,
-                    connections=mp_face_mesh.FACEMESH_CONTOURS,
-                    landmark_drawing_spec=None,
-                    connection_drawing_spec=mp_drawing_styles.get_default_face_mesh_contours_style()
-                )
-
-        # Display FPS
-        fps_end_time = time.time()
-        fps = 1 / (fps_end_time - fps_start_time)
-        fps_start_time = fps_end_time
-        cv2.putText(frame, f"FPS: {fps:.2f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
-
-        # Display the result
-        cv2.imshow('Face Recognition with Mesh', frame)
-
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
-
-    video_capture.release()
+            fps_end_time = time.time()
+            fps = 1 / (fps_end_time - fps_start_time)
+            fps_start_time = fps_end_time
+            cv2.putText(rgb_frame, f"FPS: {fps:.2f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+            cv2.imshow("Face Recognition - Dataset vs Webcam",rgb_frame)
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
     cv2.destroyAllWindows()
 
 def main():

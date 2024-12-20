@@ -1,111 +1,51 @@
 import cv2
 import numpy as np
 import face_recognition
-from mtcnn import MTCNN
-import pickle
-import queue
-from deepface import DeepFace
-from tkinter import filedialog
-from tkinter import Tk
-from sklearn.neural_network import MLPClassifier
-from sklearn.preprocessing import StandardScaler
+import mediapipe as mp
 import os
 import time
 import threading
-import mediapipe as mp
-from skimage import exposure
-from concurrent.futures import ThreadPoolExecutor
-from skimage.feature import graycomatrix, graycoprops
- 
+from tkinter import filedialog
+from tkinter import Tk
+from mtcnn import MTCNN
+import queue
+import pickle
+
 frame_queue = queue.Queue(maxsize=2)
+
+# Store registered face encodings and names
 known_face_encodings = []
 known_face_names = []
-face_images = []
 face_embeddings = []
-face_detector = MTCNN()
+face_images = []
+
 mtcnn = MTCNN()
 mp_face_mesh = mp.solutions.face_mesh
 face_mesh = mp_face_mesh.FaceMesh(static_image_mode=False, max_num_faces=10, refine_landmarks=True)
-mp_drawing = mp.solutions.drawing_utils
-mp_drawing_styles = mp.solutions.drawing_styles
-pnn_model = MLPClassifier(hidden_layer_sizes=(128,), max_iter=1000, alpha=0.01, random_state=42)
-scaler = StandardScaler()
+
+
 haar_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
 
-
 # File paths for saving and loading dataset and model
-dataset_file = 'face_dataset.pkl'
-model_file = 'pnn_model.pkl'
-scaler_file = 'scaler.pkl'
+dataset_file = 'large_dataset3.pkl'   
+dataset_names = 'largesetname2.pkl'
+face_names = 'large_face_names2.pkl'
+
+# dataset_file = 'face_dataset3.pkl'
+# dataset_names = 'datasetname2.pkl'
+# face_names = 'face_names2.pkl'
+# model_file = 'pnn_model.pkl'
+# scaler_file = 'scaler.pkl'
 
 # Store the last recognized name and encoding for consistency
 last_recognized_name = None
 last_recognized_encoding = None
 
-def save_dataset():
-    """Save the dataset to a pickle file."""
-    with open(dataset_file, 'wb') as file:
-        pickle.dump({'encodings': known_face_encodings, 'names': known_face_names}, file)
-    print("Dataset saved successfully.")
-
-def load_dataset():
-    """Load the dataset from a pickle file."""
-    global known_face_encodings, known_face_names
-    if os.path.exists(dataset_file):
-        with open(dataset_file, 'rb') as file:
-            data = pickle.load(file)
-            known_face_encodings = data.get('encodings', [])
-            known_face_names = data.get('names', [])
-        print("Dataset loaded successfully.")
-    else:
-        print("No pre-trained dataset found. Starting from scratch.")
-
-def save_model():
-    """Save the trained model and scaler."""
-    with open('pnn_model.pkl', 'wb') as model_output_file:  # Renamed the variable to avoid conflict
-        pickle.dump(pnn_model, model_output_file)
-    
-    with open('scaler.pkl', 'wb') as scaler_output_file:  # Renamed the variable to avoid conflict
-        pickle.dump(scaler, scaler_output_file)
-    
-    print("Model and scaler saved.")
-
- 
-def detect_faces(image):
-    """Detect faces in the image using MTCNN."""
-    results = face_detector.detect_faces(image)
-    faces = []
-    for result in results:
-        box = result['box']
-        x, y, width, height = box
-        face = image[y:y+height, x:x+width]
-        faces.append((face, box))
-    return faces
-
-def load_model_and_scaler():
-    """Load the trained model and scaler from pickle files."""
-    try:
-        with open(model_file, 'rb') as model_file:
-            model = pickle.load(model_file)
-        with open(scaler_file, 'rb') as scaler_file:
-            scaler = pickle.load(scaler_file)
-        print("Model and scaler loaded successfully.")
-        return model, scaler
-    except FileNotFoundError:
-        print("Model or scaler file not found. Please ensure you have trained the model.")
-        return None, None
-    
-def generate_face_embedding(face):
-    """Generate face embedding using DeepFace."""
-    try:
-        embedding = DeepFace.represent(face, model_name="Facenet", enforce_detection=False)
-        return np.array(embedding[0]['embedding'])
-    except:
-        return None
- 
 def calculate_similarity(encoding1, encoding2):
     return np.dot(encoding1, encoding2) / (np.linalg.norm(encoding1) * np.linalg.norm(encoding2))
  
+
+
 def load_dataset_and_register_faces():
     global known_face_encodings, known_face_names, face_images
     print("Select the folder containing dataset images.")
@@ -136,50 +76,48 @@ def load_dataset_and_register_faces():
                         face_images.append(image)
                     except IndexError:
                         print(f"Face not detected in {image_name}. Skipping.")
-                   
-    print("Dataset loaded and faces registered.")
-    print("Training PNN model...")
- 
-    face_embeddings = np.vstack(known_face_encodings)  
-    face_embeddings_scaled = scaler.fit_transform(face_embeddings)
-    pnn_model.fit(face_embeddings_scaled, known_face_names)
-    print("PNN model trained successfully.")
-    save_model()
-    save_dataset()
-    with open('pnn_model.pkl', 'wb') as model_file:
-        pickle.dump(pnn_model, model_file)
-    with open('scaler.pkl', 'wb') as scaler_file:
-        pickle.dump(scaler, scaler_file)
-    print("Model and scaler saved.")
- 
-def load_model_and_scaler():
-    try:
-        with open('pnn_model.pkl', 'rb') as model_file:
-            model = pickle.load(model_file)
-        with open('scaler.pkl', 'rb') as scaler_file:
-            scaler = pickle.load(scaler_file)
-        print("Model and scaler loaded successfully.")
-        return model, scaler
-    except FileNotFoundError:
-        print("Model or scaler file not found. Please ensure you have trained the model.")
-        exit()
- 
-pnn_model, scaler = load_model_and_scaler()
- 
-def extract_color_features(face):
-    """Extract color histogram features from the face image."""
-    hsv_face = cv2.cvtColor(face, cv2.COLOR_BGR2HSV)
-    hist_hue = cv2.calcHist([hsv_face], [0], None, [256], [0, 256])
-    hist_saturation = cv2.calcHist([hsv_face], [1], None, [256], [0, 256])
-    hist_value = cv2.calcHist([hsv_face], [2], None, [256], [0, 256])
-    return hist_hue.flatten(), hist_saturation.flatten(), hist_value.flatten()
- 
-def enhance_contrast(face):
-    """Enhance the contrast of the face using adaptive histogram equalization."""
-    gray_face = cv2.cvtColor(face, cv2.COLOR_BGR2GRAY)
-    enhanced_face = exposure.equalize_adapthist(gray_face, clip_limit=0.03)
-    return enhanced_face
- 
+    with open(dataset_file, 'wb') as model_file:
+        pickle.dump(known_face_encodings, model_file)
+    with open(dataset_names, 'wb') as scaler_file:
+        pickle.dump(known_face_names, scaler_file)
+    with open(face_names, 'wb') as scaler_file:
+        pickle.dump(face_images, scaler_file)
+    print("pickle file saved.") 
+
+def load_dataset():
+    global known_face_encodings, known_face_names, face_images
+    with open(dataset_file, 'rb') as file:
+    # Load the data from the pickle file
+       known_face_encodings = pickle.load(file)
+    if isinstance(known_face_encodings, list):
+        print("The dataset has been successfully converted to a list.")
+
+    with open(dataset_names, 'rb') as file:
+    # Load the data from the pickle file
+         known_face_names = pickle.load(file)
+    if isinstance(known_face_names, list):
+        print("The names has been successfully converted to a list.")
+
+    with open(face_names, 'rb') as file:
+    # Load the data from the pickle file
+         face_images = pickle.load(file)
+    if isinstance(face_images, list):
+        print("The images has been successfully converted to a list.")
+
+def main():
+    print("Do you want to load the pre-trained dataset or add new data?")
+    print("1. Load pre-trained dataset")
+    print("2. Add new dataset")
+    choice = input("Enter your choice: ")
+
+    if choice == '1':
+        load_dataset()
+    elif choice == '2':
+        load_dataset_and_register_faces()
+    else:
+        print("Invalid choice. Exiting.")
+        return
+    
 def capture_frames(rtsp_url, frame_queue):
     video_capture = cv2.VideoCapture(rtsp_url)
     if not video_capture.isOpened():
@@ -196,7 +134,8 @@ def capture_frames(rtsp_url, frame_queue):
             frame_queue.put(frame)
  
     video_capture.release()
- 
+    
+
 def recognize_faces():
     global frame_queue
     rtsp_url = "rtsp://admin:admin@192.168.1.200:554/avstream/channel=1/stream=0.sdp"
@@ -218,14 +157,9 @@ def recognize_faces():
             face_locations = face_recognition.face_locations(rgb_frame)
             face_encodings = face_recognition.face_encodings(rgb_frame, face_locations)
 
-            # Process face mesh
             results = face_mesh.process(rgb_frame)
 
             for (top, right, bottom, left), face_encoding in zip(face_locations, face_encodings):
-                # Predict the face identity using PNN
-                face_encoding_scaled = scaler.transform([face_encoding])  # Normalize the input
-                name = pnn_model.predict(face_encoding_scaled)[0]
-
                 # Compute accuracy
                 face_distances = face_recognition.face_distance(known_face_encodings, face_encoding)
                 accuracy = (1 - face_distances[np.argmin(face_distances)]) * 100
@@ -236,29 +170,10 @@ def recognize_faces():
                 # Draw the name and accuracy
                 cv2.rectangle(frame, (left, bottom - 35), (right, bottom), (0, 255, 0), cv2.FILLED)
                 cv2.putText(frame, f"{name} ({accuracy:.2f}%)", (left + 6, bottom - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
-
-            # Draw face mesh
+    
             if results.multi_face_landmarks:
-                for face_landmarks in results.multi_face_landmarks:
-                    mp_drawing.draw_landmarks(
-                        image=frame,
-                        landmark_list=face_landmarks,
-                        connections=mp_face_mesh.FACEMESH_TESSELATION,
-                        landmark_drawing_spec=None,
-                        connection_drawing_spec=mp_drawing_styles.get_default_face_mesh_tesselation_style()
-                    )
-                    mp_drawing.draw_landmarks(
-                        image=frame,
-                        landmark_list=face_landmarks,
-                        connections=mp_face_mesh.FACEMESH_CONTOURS,
-                        landmark_drawing_spec=None,
-                        connection_drawing_spec=mp_drawing_styles.get_default_face_mesh_contours_style()
-                    )
-    
-                faces = mtcnn.detect_faces(rgb_frame)
-    
                 combined_frame = processed_frame
-    
+                faces = mtcnn.detect_faces(rgb_frame)
                 for face in faces:
                     x, y, w, h = face['box']
                     try:
@@ -296,8 +211,7 @@ def recognize_faces():
                         cv2.putText(processed_frame, f"{name} ({max_similarity * 100:.2f}%)", (x, y - 10),
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
                         face_image = processed_frame[y:y + h, x:x + w]
-                        color_features = extract_color_features(face_image)
-                        enhanced_contrast = enhance_contrast(face_image)
+                        
     
                         cv2.rectangle(processed_frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
                         cv2.putText(processed_frame, f"{name} ({max_similarity * 100:.2f}%)", (x, y - 10),
@@ -317,38 +231,6 @@ def recognize_faces():
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     break
     cv2.destroyAllWindows()
-
-def capture_frames(rtsp_url, frame_queue):
-    video_capture = cv2.VideoCapture(rtsp_url)
-    if not video_capture.isOpened():
-        print("Error opening RTSP stream. Please check the URL.")
-        return
- 
-    while True:
-        ret, frame = video_capture.read()
-        if not ret:
-            print("Failed to grab frame. Exiting...")
-            break
- 
-        if not frame_queue.full():
-            frame_queue.put(frame)
- 
-    video_capture.release()
-
-def main():
-    print("Do you want to load the pre-trained dataset or add new data?")
-    print("1. Load pre-trained dataset")
-    print("2. Add new dataset")
-    choice = input("Enter your choice: ")
-
-    if choice == '1':
-        load_dataset()
-        pnn_model, scaler = load_model_and_scaler()
-    elif choice == '2':
-        load_dataset_and_register_faces()
-    else:
-        print("Invalid choice. Exiting.")
-        return
 
 if __name__ == "__main__":
     main()

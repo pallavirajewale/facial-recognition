@@ -1,0 +1,33 @@
+import tensorflow as tf
+from tensorflow.keras.callbacks import Callback
+
+# Example model (you can replace it with your own model)
+model = tf.keras.Sequential([
+    tf.keras.layers.Dense(128, activation='relu', input_shape=(784,)),
+    tf.keras.layers.Dense(10, activation='softmax')
+])
+
+# Compile the model
+model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+
+# Define your dataset (replace with your actual data)
+train_data = ...  # Your training data
+val_data = ...    # Your validation data
+
+# Custom callback to log epoch details
+class EpochLogger(Callback):
+    def on_epoch_end(self, epoch, logs=None):
+        logs = logs or {}
+        epoch_num = epoch + 1
+        loss = logs.get('loss')
+        val_loss = logs.get('val_loss')
+        print(f"Epoch {epoch_num}/10 - loss: {loss:.4f} - val_loss: {val_loss:.4f}")
+
+# Instantiate the EpochLogger
+epoch_logger = EpochLogger()
+
+# Train the model and log epoch details
+model.fit(train_data,
+          epochs=10,
+          validation_data=val_data,
+          callbacks=[epoch_logger])
